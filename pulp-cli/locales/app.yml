@@ -1,0 +1,154 @@
+_version: 2
+
+# -----------------------------------------------------------------------------
+# Pulp CLI i18n resources
+#
+# 说明：
+# - 使用 rust-i18n 的 _version:2 格式：一个 key 下按 locale 分支。
+# - 约定：英文为默认回退语言（fallback=en）。
+# - CLI 文案尽量“短、明确、可脚本化”；错误信息避免含糊其辞。
+# -----------------------------------------------------------------------------
+
+cli.app_name:
+    en: "pulp"
+    zh-CN: "pulp"
+
+cli.description:
+    en: "A pure-Rust-first archive tool (compress/extract/list)."
+    zh-CN: "纯 Rust 优先的压缩/解压/列出工具。"
+
+cli.help.hint:
+    en: "Use --help to see available commands and options."
+    zh-CN: "使用 --help 查看可用命令与参数。"
+
+# -----------------------------------------------------------------------------
+# Commands
+# -----------------------------------------------------------------------------
+cmd.list:
+    en: "List archive entries"
+    zh-CN: "列出压缩包条目"
+
+cmd.extract:
+    en: "Extract archive"
+    zh-CN: "解压压缩包"
+
+cmd.compress:
+    en: "Compress files/folders"
+    zh-CN: "压缩文件/文件夹"
+
+cmd.probe:
+    en: ""
+    zh-CN: ""
+
+cmd.help:
+    en: ""
+    zh-CN: ""
+
+cmd.version:
+    en: "Print version information"
+    zh-CN: "输出版本信息"
+
+# -----------------------------------------------------------------------------
+# Common options / arguments labels
+# -----------------------------------------------------------------------------
+arg.archive:
+    en: "Archive path"
+    zh-CN: "压缩包路径"
+
+arg.output_dir:
+    en: "Output directory"
+    zh-CN: "输出目录"
+
+arg.inputs:
+    en: "Input paths"
+    zh-CN: "输入路径"
+
+opt.format:
+    en: "Archive format"
+    zh-CN: "压缩格式"
+
+opt.overwrite:
+    en: "Overwrite existing files"
+    zh-CN: "覆盖已存在文件"
+
+opt.password:
+    en: "Password"
+    zh-CN: "密码"
+
+opt.threads:
+    en: "Threads"
+    zh-CN: "线程数"
+
+opt.level:
+    en: "Compression level"
+    zh-CN: "压缩等级"
+
+opt.solid:
+    en: "Solid mode (if supported)"
+    zh-CN: "Solid 模式（若支持）"
+
+opt.locale:
+    en: "Language/locale (en, zh-CN, system)"
+    zh-CN: "语言/区域（en、zh-CN、system）"
+
+# -----------------------------------------------------------------------------
+# Output / progress
+# -----------------------------------------------------------------------------
+out.list.header:
+    en: "Entries:"
+    zh-CN: "条目："
+
+out.list.item_file:
+    en: "FILE  %{path}"
+    zh-CN: "文件  %{path}"
+
+out.list.item_dir:
+    en: "DIR   %{path}"
+    zh-CN: "目录  %{path}"
+
+out.extract.start:
+    en: "Extracting: %{archive}"
+    zh-CN: "开始解压：%{archive}"
+
+out.extract.dest:
+    en: "Destination: %{dir}"
+    zh-CN: "目标目录：%{dir}"
+
+out.compress.start:
+    en: "Compressing to: %{archive}"
+    zh-CN: "开始压缩到：%{archive}"
+
+out.done:
+    en: "Done."
+    zh-CN: "完成。"
+
+out.cancelled:
+    en: "Cancelled."
+    zh-CN: "已取消。"
+
+# -----------------------------------------------------------------------------
+# Errors
+# -----------------------------------------------------------------------------
+err.generic:
+    en: "Error: %{message}"
+    zh-CN: "错误：%{message}"
+
+err.invalid_path:
+    en: "Invalid path: %{path}"
+    zh-CN: "路径无效：%{path}"
+
+err.unsupported:
+    en: "Unsupported: %{message}"
+    zh-CN: "不支持：%{message}"
+
+err.io:
+    en: "I/O error: %{message}"
+    zh-CN: "读写错误：%{message}"
+
+err.cancelled:
+    en: "Operation cancelled."
+    zh-CN: "操作已取消。"
+
+err.bad_password:
+    en: "Incorrect password or encrypted archive."
+    zh-CN: "密码错误或压缩包已加密。"

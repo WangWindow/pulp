@@ -1,0 +1,6 @@
+max_width = 100                    # 每行最大字符数
+tab_spaces = 4                     # 缩进空格数
+reorder_imports = true             # 按字母顺序排序 use 语句
+wrap_comments = true               # 自动换行注释
+normalize_comments = true          # 规范化注释格式
+format_code_in_doc_comments = true # 格式化文档注释中的代码块

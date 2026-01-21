@@ -1,0 +1,3 @@
+[workspace]
+members = ["pulp-cli", "pulp-core", "pulp-ui"]
+resolver = "2"

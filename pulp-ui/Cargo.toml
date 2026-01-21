@@ -1,0 +1,29 @@
+[package]
+name = "pulp-ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pulp-core = { path = "../pulp-core" }
+iced = { version = "0.14", features = ["tokio", "svg", "advanced"] }
+iced_aw = { version = "0.13.0", default-features = false, features = [
+    "context_menu",
+    "card",
+    "drop_down",
+    "menu",
+    "sidebar",
+] }
+time = { version = "0.3", features = ["formatting"] }
+catppuccin = { version = "2.6", features = ["iced"] }
+icondata = { version = "0.7", default-features = false, features = [
+    "remix-icon",
+] }
+tokio = { version = "1", features = ["full"] }
+dark-light = "2"
+rust-i18n = "3"
+sys-locale = "0.3"
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+sysinfo = "0.37"
+libsql = "0.9"
