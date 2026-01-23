@@ -10,6 +10,11 @@ pub const DRAWER_MIN_WIDTH_PX: f32 = 280.0;
 /// 最大宽度采用窗口宽度的比例（避免喧宾夺主）。
 pub const DRAWER_MAX_WIDTH_RATIO: f32 = 0.55;
 
+/// Drawer 分割线可见宽度。
+pub const DIVIDER_VISUAL_PX: f32 = 2.0;
+/// Drawer 分割线可拖拽 hitbox 宽度。
+pub const DIVIDER_HITBOX_PX: f32 = 8.0;
+
 /// 应用整体内边距。
 pub const APP_PADDING_PX: f32 = 12.0;
 /// 主要区域的间距。
@@ -22,3 +27,6 @@ pub const LIST_ROW_HEIGHT_PX: f32 = 32.0;
 
 /// 虚拟列表超前/滞后渲染行数（减少滚动抖动）。
 pub const LIST_OVERSCAN: usize = 6;
+
+/// 文件视图自动刷新间隔（毫秒）。
+pub const AUTO_REFRESH_MS: u64 = 5000;

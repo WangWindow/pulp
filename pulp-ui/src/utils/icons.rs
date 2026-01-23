@@ -1,5 +1,13 @@
 use iced::widget::svg;
 use icondata::Icon;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+/// SVG Handle 缓存：减少重复构建与分配（性能优化）。
+fn icon_handle_cache() -> &'static Mutex<HashMap<String, svg::Handle>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, svg::Handle>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 pub fn icon_handle(icon: Icon) -> svg::Handle {
     let view_box = icon.view_box.unwrap_or("0 0 24 24");
@@ -21,6 +29,14 @@ pub fn icon_handle(icon: Icon) -> svg::Handle {
     // 这里统一把 `currentColor` 替换为黑色，让图标至少能被正确绘制出来。
     let data = icon.data.replace("currentColor", "#000000");
 
+    // 中文注释：缓存 key 使用最终 SVG 相关字段，避免重复构建 Handle。
+    let cache_key = format!("{view_box}|{width}|{height}|{fill}|{data}");
+    if let Ok(cache) = icon_handle_cache().lock() {
+        if let Some(handle) = cache.get(&cache_key) {
+            return handle.clone();
+        }
+    }
+
     // icondata 的 `data` 通常是 SVG 片段（一个或多个 `<path .../>`），但也有
     // 少数图标仅提供 path 的 d 值。两种情况都兼容。
     let body = if data.contains('<') {
@@ -32,5 +48,11 @@ pub fn icon_handle(icon: Icon) -> svg::Handle {
     let svg = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"{view_box}\" fill=\"{fill}\">{body}</svg>"
     );
-    svg::Handle::from_memory(svg.into_bytes())
+    let handle = svg::Handle::from_memory(svg.into_bytes());
+
+    if let Ok(mut cache) = icon_handle_cache().lock() {
+        cache.insert(cache_key, handle.clone());
+    }
+
+    handle
 }

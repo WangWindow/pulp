@@ -1,6 +1,7 @@
 //! iced 更新逻辑：消息分发与状态转换。
 
 use super::App;
+use super::app::SidebarSwipeTarget;
 use super::helpers::{
     build_archive_children_index, build_rows_from_fs, build_tree_render_rows, parse_virtual_path,
 };
@@ -11,7 +12,7 @@ use crate::domain::{
     EntryRow, EntrySource, GlobalEvent, Message, Page, ViewMode, handle_global_event,
 };
 use crate::utils;
-use crate::utils::fs::{apply_filter, load_directory};
+use crate::utils::fs::{apply_filter, load_directory, open_path};
 use iced::Task;
 use pulp_core::ArchiveFormat;
 use rust_i18n::t;
@@ -79,7 +80,6 @@ impl App {
 
                 Task::none()
             }
-
             // -------------------------------
             // 树状列表：展开/折叠与按需加载
             // -------------------------------
@@ -148,7 +148,6 @@ impl App {
 
                 Task::none()
             }
-
             Message::TreeChildrenLoaded(real_dir, children) => {
                 if self.view_mode != ViewMode::FileSystemTree {
                     return Task::none();
@@ -172,7 +171,6 @@ impl App {
 
                 Task::none()
             }
-
             Message::TaskCancelRequested => {
                 if let Some(token) = self.active_task_cancel.as_ref() {
                     token.cancel();
@@ -181,12 +179,23 @@ impl App {
                 }
                 Task::none()
             }
-
             Message::ListViewportChanged(viewport) => {
                 self.list_viewport = Some(viewport);
                 Task::none()
             }
+            Message::AutoRefreshTick => {
+                if self.busy
+                    || self.page != Page::Browser
+                    || !matches!(self.view_mode, ViewMode::FileSystem)
+                {
+                    return Task::none();
+                }
 
+                let path = self.selected_path.clone();
+                Task::perform(load_directory(path), |(path, entries)| {
+                    Message::DirLoaded(path, entries)
+                })
+            }
             Message::CloseDrawer => {
                 self.drawer_open = false;
                 self.drawer_resizing = false;
@@ -204,6 +213,11 @@ impl App {
             }
             Message::DismissTitleMenu => {
                 self.title_menu_open = false;
+                Task::none()
+            }
+            Message::DismissContextMenu => {
+                // 右键菜单的 overlay 关闭：应与标题菜单的 open 状态解耦，
+                // 以避免“关闭右键菜单顺便关闭标题菜单”的副作用。
                 Task::none()
             }
             Message::ToggleMenu => {
@@ -228,6 +242,7 @@ impl App {
                         crate::i18n::AppLocale::En,
                     );
                     rust_i18n::set_locale(locale_state.effective_locale_str());
+                    self.effective_locale = locale_state.effective;
                 }
 
                 Task::none()
@@ -259,6 +274,7 @@ impl App {
                     crate::i18n::AppLocale::En,
                 );
                 rust_i18n::set_locale(locale_state.effective_locale_str());
+                self.effective_locale = locale_state.effective;
 
                 Task::none()
             }
@@ -278,6 +294,7 @@ impl App {
                     crate::i18n::AppLocale::En,
                 );
                 rust_i18n::set_locale(locale_state.effective_locale_str());
+                self.effective_locale = locale_state.effective;
 
                 Task::none()
             }
@@ -328,7 +345,6 @@ impl App {
 
                 return self.enqueue_task(UiTask::CreateFolder { parent, name });
             }
-
             Message::RenameRequested(target) => {
                 self.selected_entry = Some(target.clone());
                 self.rename_target = Some(target.clone());
@@ -387,7 +403,6 @@ impl App {
 
                 return self.enqueue_task(UiTask::Rename { from, to });
             }
-
             Message::DeleteRequested(target) => {
                 self.selected_entry = Some(target.clone());
                 self.delete_target = Some(target);
@@ -447,6 +462,147 @@ impl App {
                     }
                 }
                 self.finish_task_and_next()
+            }
+            Message::OpenFinished(result) => {
+                match result {
+                    Ok(()) => {
+                        self.status = t!("status.ready").to_string();
+                    }
+                    Err(err) => {
+                        self.status =
+                            t!("status.operation_failed", error = err.as_str()).to_string();
+                    }
+                }
+                Task::none()
+            }
+            Message::MountRequested(device) => {
+                self.status = t!("status.mounting").to_string();
+                self.busy = true;
+                self.active_task_error = None;
+                Task::perform(
+                    crate::utils::mounts::mount_device(device),
+                    Message::MountFinished,
+                )
+            }
+            Message::UnmountRequested(device) => {
+                if crate::utils::mounts::is_system_device(&device) {
+                    self.status = t!("status.unmount_system_blocked").to_string();
+                    return Task::none();
+                }
+                self.status = t!("status.unmounting").to_string();
+                self.busy = true;
+                self.active_task_error = None;
+                Task::perform(
+                    crate::utils::mounts::unmount_device(device),
+                    Message::UnmountFinished,
+                )
+            }
+            Message::UnmountConfirmRequested(device) => {
+                if crate::utils::mounts::is_system_device(&device) {
+                    self.status = t!("status.unmount_system_blocked").to_string();
+                    return Task::none();
+                }
+                self.unmount_confirm_open = true;
+                self.unmount_confirm_device = Some(device);
+                self.sidebar_swipe_open = None;
+                Task::none()
+            }
+            Message::UnmountConfirmCancel => {
+                self.unmount_confirm_open = false;
+                self.unmount_confirm_device = None;
+                Task::none()
+            }
+            Message::UnmountConfirmAccept => {
+                let Some(device) = self.unmount_confirm_device.clone() else {
+                    self.unmount_confirm_open = false;
+                    return Task::none();
+                };
+                self.unmount_confirm_open = false;
+                self.unmount_confirm_device = None;
+                return self.update(Message::UnmountRequested(device));
+            }
+            Message::MountFinished(result) => {
+                self.busy = false;
+                crate::utils::mounts::invalidate_sidebar_cache();
+                match result {
+                    Ok(path) => {
+                        if path.as_os_str().is_empty() {
+                            self.status = t!("status.mount_done").to_string();
+                            return Task::none();
+                        }
+                        self.status =
+                            t!("status.mount_done.path", path = path.display().to_string())
+                                .to_string();
+                        if path.is_dir() {
+                            return self.navigate_to(path, true);
+                        }
+                    }
+                    Err(err) => {
+                        self.status = t!("status.operation_failed", error = err).to_string();
+                        self.active_task_error = Some(err);
+                    }
+                }
+                Task::none()
+            }
+            Message::UnmountFinished(result) => {
+                self.busy = false;
+                crate::utils::mounts::invalidate_sidebar_cache();
+                match result {
+                    Ok(()) => {
+                        self.status = t!("status.unmount_done").to_string();
+                    }
+                    Err(err) => {
+                        self.status = t!("status.operation_failed", error = err).to_string();
+                        self.active_task_error = Some(err);
+                    }
+                }
+                Task::none()
+            }
+            Message::SidebarSwipeStart(device, path) => {
+                self.sidebar_swipe_target = Some(SidebarSwipeTarget {
+                    device,
+                    path,
+                    start_x: self.last_cursor_pos.map(|p| p.x),
+                    dragged: false,
+                });
+                Task::none()
+            }
+
+            Message::PropertiesRequested(entry) => {
+                let path = entry.path.clone();
+                self.properties_target = Some(path.clone());
+                self.properties_open = true;
+
+                let mut lines = Vec::new();
+                lines.push(format!(
+                    "{}: {}",
+                    t!("files.column.name"),
+                    entry.display_name
+                ));
+                lines.push(format!(
+                    "{}: {}",
+                    t!("appbar.location_edit"),
+                    path.display()
+                ));
+                lines.push(format!("{}: {}", t!("files.column.type"), entry.kind));
+
+                let size = entry
+                    .size
+                    .map(utils::format_size)
+                    .unwrap_or_else(|| "—".into());
+                lines.push(format!("{}: {}", t!("files.column.size"), size));
+
+                let modified = utils::format_time(entry.modified);
+                lines.push(format!("{}: {}", t!("files.column.modified"), modified));
+
+                self.properties_content = Some(lines.join("\n"));
+                Task::none()
+            }
+            Message::PropertiesClose => {
+                self.properties_target = None;
+                self.properties_open = false;
+                self.properties_content = None;
+                Task::none()
             }
 
             Message::FolderCreated(result) => {
@@ -802,6 +958,12 @@ impl App {
                 match action {
                     ContextAction::Open => {
                         self.status = t!("status.opening").to_string();
+                        if matches!(row.source, EntrySource::FileSystem)
+                            && !row.is_dir
+                            && ArchiveFormat::from_path(&target).is_none()
+                        {
+                            return Task::perform(open_path(target), Message::OpenFinished);
+                        }
                         return self.open_row(row);
                     }
                     ContextAction::SmartExtract => {
@@ -870,8 +1032,7 @@ impl App {
                         return self.update(Message::DeleteRequested(target));
                     }
                     ContextAction::Properties => {
-                        self.status = t!("status.properties_unsupported").to_string();
-                        Task::none()
+                        return self.update(Message::PropertiesRequested(row));
                     }
                 }
             }
@@ -908,6 +1069,39 @@ impl App {
                     }
                 }
 
+                match &event {
+                    iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                        self.last_cursor_pos = Some(*position);
+
+                        if let Some(target) = self.sidebar_swipe_target.as_mut() {
+                            let start_x = target.start_x.get_or_insert(position.x);
+                            let dx = position.x - *start_x;
+                            if dx.abs() > 6.0 {
+                                target.dragged = true;
+                            }
+                            if dx <= -24.0 {
+                                self.sidebar_swipe_open = Some(target.device.clone());
+                            } else if dx >= 12.0 {
+                                if self.sidebar_swipe_open.as_deref()
+                                    == Some(target.device.as_str())
+                                {
+                                    self.sidebar_swipe_open = None;
+                                }
+                            }
+                        }
+                    }
+                    iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                        iced::mouse::Button::Left,
+                    )) => {
+                        if let Some(target) = self.sidebar_swipe_target.take() {
+                            if !target.dragged {
+                                return self.navigate_to(target.path, true);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
                 match handle_global_event(&event) {
                     GlobalEvent::None => {}
                     GlobalEvent::FileDropped(path) => {
@@ -932,6 +1126,17 @@ impl App {
             }
             self.status = t!("status.open_unsupported").to_string();
             return Task::none();
+        }
+
+        // 回退：树视图/过滤列表可能不在 entries 中，直接访问文件系统判断。
+        if let Ok(md) = std::fs::metadata(&path) {
+            if md.is_dir() {
+                return self.navigate_to(path, true);
+            }
+            if ArchiveFormat::from_path(&path).is_some() {
+                return self.enqueue_task(UiTask::ListArchive(path));
+            }
+            self.status = t!("status.open_unsupported").to_string();
         }
         Task::none()
     }
@@ -988,6 +1193,9 @@ impl App {
             self.back_stack.push(self.selected_path.clone());
             self.forward_stack.clear();
         }
+
+        self.sidebar_swipe_target = None;
+        self.sidebar_swipe_open = None;
 
         self.page = Page::Browser;
         self.selected_path = path.clone();

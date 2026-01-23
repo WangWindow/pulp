@@ -1,6 +1,5 @@
 //! 虚拟列表：仅渲染可见区间，避免一次性构建大量行。
 
-use crate::domain::Message;
 use iced::widget::scrollable::Viewport;
 use iced::widget::{column, space};
 use iced::{Element, Length};
@@ -22,13 +21,13 @@ impl VirtualListConfig {
     }
 }
 
-pub fn virtual_list<'a, T, F>(
+pub fn virtual_list<'a, T, M: 'a, F>(
     items: &'a [T],
     config: VirtualListConfig,
     render: F,
-) -> Element<'a, Message>
+) -> Element<'a, M>
 where
-    F: Fn(&'a T) -> Element<'a, Message> + 'a,
+    F: Fn(&'a T) -> Element<'a, M> + 'a,
 {
     if items.is_empty() {
         return column![].into();

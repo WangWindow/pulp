@@ -117,3 +117,18 @@ pub async fn delete_path(target: PathBuf) -> Result<(), String> {
     }
     Ok(())
 }
+
+pub async fn open_path(path: PathBuf) -> Result<(), String> {
+    let status = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("xdg-open").arg(&path).status()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("xdg-open failed with status: {status}"))
+    }
+}

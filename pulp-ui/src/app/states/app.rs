@@ -2,10 +2,12 @@
 
 use crate::app::config;
 use crate::domain::{
-    DRAWER_DEFAULT_WIDTH_PX, DrawerPanel, EntryRow, FileEntry, Message, Page, ThemeMode, ViewMode,
+    AUTO_REFRESH_MS, DRAWER_DEFAULT_WIDTH_PX, DrawerPanel, EntryRow, FileEntry, Message, Page,
+    ThemeMode, ViewMode,
 };
+use crate::i18n::AppLocale;
 use iced::widget::scrollable::Viewport;
-use iced::{Subscription, Task, Theme};
+use iced::{Point, Subscription, Task, Theme};
 use pulp_core::CancellationToken;
 use rust_i18n::t;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -43,6 +45,7 @@ pub struct App {
     pub(super) title_menu_open: bool,
     pub(super) location_editing: bool,
     pub(super) theme_mode: ThemeMode,
+    pub(super) effective_locale: AppLocale,
     pub(super) system_dark: bool,
     pub(super) selected_entry: Option<PathBuf>,
     pub(super) extract_to_target: Option<PathBuf>,
@@ -52,6 +55,9 @@ pub struct App {
     pub(super) rename_target: Option<PathBuf>,
     pub(super) rename_name: String,
     pub(super) delete_target: Option<PathBuf>,
+    pub(super) properties_target: Option<PathBuf>,
+    pub(super) properties_open: bool,
+    pub(super) properties_content: Option<String>,
     pub(super) last_click: Option<(PathBuf, std::time::Instant)>,
     pub(super) spinner_index: usize,
     pub(super) busy: bool,
@@ -99,6 +105,23 @@ pub struct App {
 
     // Drawer resize drag state（全局鼠标事件驱动）
     pub(super) drawer_resize_last_cursor_x: Option<f32>,
+
+    // 侧边栏左划状态
+    pub(super) sidebar_swipe_target: Option<SidebarSwipeTarget>,
+    pub(super) sidebar_swipe_open: Option<String>,
+    pub(super) last_cursor_pos: Option<Point>,
+
+    // 卸载确认弹窗
+    pub(super) unmount_confirm_open: bool,
+    pub(super) unmount_confirm_device: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SidebarSwipeTarget {
+    pub device: String,
+    pub path: PathBuf,
+    pub start_x: Option<f32>,
+    pub dragged: bool,
 }
 
 impl App {
@@ -142,6 +165,7 @@ impl App {
                 title_menu_open: false,
                 location_editing: false,
                 theme_mode: ThemeMode::System,
+                effective_locale: locale_state.effective,
                 system_dark,
                 selected_entry: None,
                 extract_to_target: None,
@@ -151,6 +175,9 @@ impl App {
                 rename_target: None,
                 rename_name: String::new(),
                 delete_target: None,
+                properties_target: None,
+                properties_open: false,
+                properties_content: None,
                 last_click: None,
                 spinner_index: 0,
                 busy: false,
@@ -181,6 +208,13 @@ impl App {
                 drawer_resizing: false,
 
                 drawer_resize_last_cursor_x: None,
+
+                sidebar_swipe_target: None,
+                sidebar_swipe_open: None,
+                last_cursor_pos: None,
+
+                unmount_confirm_open: false,
+                unmount_confirm_device: None,
             },
             Task::perform(
                 crate::utils::fs::load_directory(root_path),
@@ -193,6 +227,16 @@ impl App {
         let mut subs = vec![iced::event::listen().map(Message::Event)];
         if self.busy {
             subs.push(iced::time::every(Duration::from_millis(140)).map(|_| Message::Tick));
+        }
+        if !self.busy
+            && self.page == Page::Browser
+            && matches!(self.view_mode, ViewMode::FileSystem)
+            && !self.location_editing
+        {
+            subs.push(
+                iced::time::every(Duration::from_millis(AUTO_REFRESH_MS))
+                    .map(|_| Message::AutoRefreshTick),
+            );
         }
         Subscription::batch(subs)
     }

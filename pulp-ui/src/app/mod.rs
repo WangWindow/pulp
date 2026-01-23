@@ -2,8 +2,8 @@
 
 mod config;
 mod states;
-mod themes;
-mod components;
+pub mod themes;
+mod ui_rules;
 
 use iced::{Size, window};
 use states::App;

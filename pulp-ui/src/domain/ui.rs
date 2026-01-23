@@ -1,7 +1,5 @@
 //! UI 相关枚举：页面、主题、视图模式等。
 
-use rust_i18n::t;
-
 /// Drawer 内部面板（同一时刻只显示一个，避免信息堆砌）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawerPanel {
@@ -29,13 +27,19 @@ pub enum ThemeMode {
 
 pub const THEME_MODES: [ThemeMode; 3] = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark];
 
+impl ThemeMode {
+    pub fn label_key(&self) -> &'static str {
+        match self {
+            ThemeMode::System => "menu.settings.theme.follow_system",
+            ThemeMode::Light => "menu.settings.theme.light",
+            ThemeMode::Dark => "menu.settings.theme.dark",
+        }
+    }
+}
+
 impl std::fmt::Display for ThemeMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ThemeMode::System => write!(f, "{}", t!("menu.settings.theme.follow_system")),
-            ThemeMode::Light => write!(f, "{}", t!("menu.settings.theme.light")),
-            ThemeMode::Dark => write!(f, "{}", t!("menu.settings.theme.dark")),
-        }
+        write!(f, "{}", self.label_key())
     }
 }
 

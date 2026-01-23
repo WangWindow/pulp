@@ -1,21 +1,23 @@
 //! 底部状态栏组件
 
-use crate::app::themes;
-use crate::domain::Message;
 use iced::widget::{column, container, row, rule, text};
-use iced::{Alignment, Element, Length};
-use rust_i18n::t;
+use iced::{Alignment, Element, Length, Theme};
 
-pub fn status_bar<'a>(
-    item_count: usize,
-    status: &'a str,
+#[derive(Copy, Clone)]
+pub struct StatusBarStyle {
+    pub panel_style: fn(&Theme) -> iced::widget::container::Style,
+}
+
+pub fn status_bar<'a, M: 'a>(
+    items_label: String,
+    status: String,
     busy: bool,
     spinner_index: usize,
-) -> Element<'a, Message> {
-    let status_owned = status.to_string();
-
-    let left = text(t!("status.items", count = item_count)).size(12);
-    let mid = text(status_owned).size(12);
+    style: StatusBarStyle,
+) -> Element<'a, M> {
+    // 中文注释：由上层传入已本地化文本，组件不再依赖 i18n。
+    let left = text(items_label).size(12);
+    let mid = text(status).size(12);
 
     let right = if busy {
         let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -37,6 +39,6 @@ pub fn status_bar<'a>(
         rule::horizontal(1),
         container(bar).padding([6, 10])
     ])
-    .style(themes::styles::panel_style)
+    .style(style.panel_style)
     .into()
 }

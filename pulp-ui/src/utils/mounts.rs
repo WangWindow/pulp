@@ -7,8 +7,13 @@
 //!
 //! 依赖：sysinfo（跨平台获取磁盘与挂载点信息）
 
+use crate::utils::format_size;
 use rust_i18n::t;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use sysinfo::Disks;
 
 /// 左侧栏条目类型。
@@ -42,8 +47,49 @@ pub struct SidebarItem {
     /// 点击后要导航到的路径。
     pub path: PathBuf,
 
+    /// 设备标识（Linux: /dev/sda1），用于挂载/卸载等操作。
+    pub device: Option<String>,
+
+    /// 文件系统类型（如 ext4 / xfs / btrfs）。
+    pub fs_type: Option<String>,
+
+    /// 是否可移除设备（用于显示与操作提示）。
+    pub removable: Option<bool>,
+
+    /// 是否已挂载（某些条目可能未挂载但可挂载）。
+    pub mounted: bool,
+
+    /// 是否系统盘（例如 Linux 的 "/"）。
+    pub system: bool,
+
     /// 是否可写（目前仅用于 UI 可选的禁用态；不保证完全准确）。
     pub writable: Option<bool>,
+}
+
+static SIDEBAR_ITEMS_CACHE: OnceLock<Mutex<HashMap<String, Vec<SidebarItem>>>> = OnceLock::new();
+static MOUNT_SUPPORT_CACHE: OnceLock<bool> = OnceLock::new();
+
+/// 是否支持磁盘挂载（Linux: udisksctl）。
+///
+/// - 若系统缺少 `udisksctl`，返回 false。
+/// - 非 Linux 平台直接返回 false。
+pub fn mount_supported() -> bool {
+    *MOUNT_SUPPORT_CACHE.get_or_init(|| {
+        if cfg!(target_os = "linux") {
+            command_exists("udisksctl")
+        } else {
+            false
+        }
+    })
+}
+
+/// 清空侧边栏缓存（挂载/卸载后用于刷新）。
+pub fn invalidate_sidebar_cache() {
+    if let Some(cache) = SIDEBAR_ITEMS_CACHE.get() {
+        if let Ok(mut guard) = cache.lock() {
+            guard.clear();
+        }
+    }
 }
 
 /// 采集侧边栏数据：Places + Volumes。
@@ -65,6 +111,20 @@ pub fn load_sidebar_items() -> Vec<SidebarItem> {
             .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
     });
 
+    items
+}
+
+/// 基于 locale 的缓存版本（避免重复生成本地化文本/系统调用）。
+pub fn load_sidebar_items_cached(locale_key: &str) -> Vec<SidebarItem> {
+    let cache = SIDEBAR_ITEMS_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("sidebar items cache lock");
+
+    if let Some(items) = guard.get(locale_key) {
+        return items.clone();
+    }
+
+    let items = load_sidebar_items();
+    guard.insert(locale_key.to_string(), items.clone());
     items
 }
 
@@ -91,6 +151,11 @@ fn load_places() -> Vec<SidebarItem> {
             label: t!("sidebar.home").to_string(),
             subtitle: Some(home.display().to_string()),
             path: home.clone(),
+            device: None,
+            fs_type: None,
+            removable: None,
+            mounted: true,
+            system: false,
             writable: Some(is_writable(&home)),
         });
 
@@ -135,19 +200,34 @@ fn load_places() -> Vec<SidebarItem> {
         );
     }
 
-    // 根目录：Linux 标配；Windows 上如果存在也无妨（通常不会是用户可访问的“/”）。
-    add_if_dir(
-        &mut out,
-        SidebarItemKind::Place,
-        t!("sidebar.root").to_string(),
-        PathBuf::from("/"),
-    );
+    // // 根目录：Linux 标配；Windows 上如果存在也无妨（通常不会是用户可访问的“/”）。
+    // add_if_dir(
+    //     &mut out,
+    //     SidebarItemKind::Place,
+    //     t!("sidebar.root").to_string(),
+    //     PathBuf::from("/"),
+    // );
 
     out
 }
 
 /// 采集磁盘卷/挂载点（跨平台），使用 sysinfo。
 fn load_volumes() -> Vec<SidebarItem> {
+    #[cfg(target_os = "linux")]
+    {
+        if mount_supported() && command_exists("lsblk") {
+            if let Ok(items) = load_volumes_lsblk() {
+                if !items.is_empty() {
+                    return items;
+                }
+            }
+        }
+    }
+
+    load_volumes_sysinfo()
+}
+
+fn load_volumes_sysinfo() -> Vec<SidebarItem> {
     // sysinfo：使用 Disks API（跨平台），并刷新列表与容量数据
     let mut disks = Disks::new_with_refreshed_list();
     for disk in disks.list_mut() {
@@ -174,16 +254,242 @@ fn load_volumes() -> Vec<SidebarItem> {
         let label = volume_label(disk, &mount);
         let subtitle = Some(format_capacity(avail, total, disk));
 
+        let fs_type = disk
+            .file_system()
+            .to_string_lossy()
+            .to_string()
+            .trim()
+            .to_string();
+
+        let device = disk.name().to_string_lossy().to_string();
+        let removable = Some(disk.is_removable());
+
         out.push(SidebarItem {
             kind: SidebarItemKind::Volume,
             label,
             subtitle,
             path: mount.clone(),
+            device: if device.trim().is_empty() {
+                None
+            } else {
+                Some(device)
+            },
+            fs_type: if fs_type.is_empty() {
+                None
+            } else {
+                Some(fs_type)
+            },
+            removable,
+            mounted: true,
+            system: is_system_mount_path(&mount),
             writable: Some(is_writable(&mount)),
         });
     }
 
     out
+}
+
+#[cfg(target_os = "linux")]
+fn load_volumes_lsblk() -> Result<Vec<SidebarItem>, String> {
+    let output = Command::new("lsblk")
+        .args(["-J", "-o", "NAME,PATH,MOUNTPOINT,LABEL,FSTYPE,RM,SIZE,TYPE"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let parsed: LsblkOutput = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("lsblk json parse failed: {e}"))?;
+
+    let mut out = Vec::new();
+    for dev in parsed.blockdevices.into_iter() {
+        flatten_lsblk(dev, &mut out);
+    }
+
+    Ok(out)
+}
+
+#[cfg(target_os = "linux")]
+fn flatten_lsblk(dev: LsblkDevice, out: &mut Vec<SidebarItem>) {
+    let dev_type = dev.dev_type.unwrap_or_default();
+    let path = dev.path.unwrap_or_default();
+    let mountpoint = dev.mountpoint.clone().unwrap_or_default();
+
+    if dev_type == "loop" || path.trim().is_empty() {
+        if let Some(children) = dev.children {
+            for c in children {
+                flatten_lsblk(c, out);
+            }
+        }
+        return;
+    }
+
+    if !dev.fstype.as_deref().unwrap_or("").is_empty() {
+        let mounted = !mountpoint.trim().is_empty();
+        let mount_path = if mounted {
+            PathBuf::from(mountpoint.trim())
+        } else {
+            PathBuf::from(path.clone())
+        };
+
+        if mounted && should_filter_mount_point(&mount_path) {
+            return;
+        }
+
+        let label = dev
+            .label
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                if mounted {
+                    mount_path.display().to_string()
+                } else {
+                    dev.name.clone().unwrap_or_else(|| path.clone())
+                }
+            });
+
+        let mut subtitle_parts = Vec::new();
+        if let Some(size) = dev.size.clone().filter(|s| !s.trim().is_empty()) {
+            subtitle_parts.push(size);
+        }
+        if !mounted {
+            subtitle_parts.push(t!("sidebar.unmounted").to_string());
+        }
+
+        let subtitle = if subtitle_parts.is_empty() {
+            None
+        } else {
+            Some(subtitle_parts.join(" · "))
+        };
+
+        out.push(SidebarItem {
+            kind: SidebarItemKind::Volume,
+            label,
+            subtitle,
+            path: mount_path.clone(),
+            device: Some(path.clone()),
+            fs_type: dev.fstype.clone(),
+            removable: dev.rm,
+            mounted,
+            system: mounted && is_system_mount_path(&mount_path),
+            writable: if mounted {
+                Some(is_writable(&mount_path))
+            } else {
+                None
+            },
+        });
+    }
+
+    if let Some(children) = dev.children {
+        for c in children {
+            flatten_lsblk(c, out);
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct LsblkOutput {
+    blockdevices: Vec<LsblkDevice>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct LsblkDevice {
+    name: Option<String>,
+    path: Option<String>,
+    mountpoint: Option<String>,
+    label: Option<String>,
+    fstype: Option<String>,
+    rm: Option<bool>,
+    size: Option<String>,
+    #[serde(rename = "type")]
+    dev_type: Option<String>,
+    children: Option<Vec<LsblkDevice>>,
+}
+
+fn command_exists(cmd: &str) -> bool {
+    Command::new(cmd)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// 挂载设备（Linux: udisksctl）。
+pub async fn mount_device(device: String) -> Result<PathBuf, String> {
+    if !mount_supported() {
+        return Err("mount unsupported".to_string());
+    }
+
+    if !cfg!(target_os = "linux") {
+        return Err("mount unsupported on this platform".to_string());
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("udisksctl")
+            .args(["mount", "-b", device.as_str()])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| e.to_string())?;
+
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(parse_udisksctl_mount_path(&stdout).unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 卸载设备（Linux: udisksctl）。
+pub async fn unmount_device(device: String) -> Result<(), String> {
+    if !mount_supported() {
+        return Err("unmount unsupported".to_string());
+    }
+
+    if !cfg!(target_os = "linux") {
+        return Err("unmount unsupported on this platform".to_string());
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("udisksctl")
+            .args(["unmount", "-b", device.as_str()])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| e.to_string())?;
+
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn parse_udisksctl_mount_path(stdout: &str) -> Option<PathBuf> {
+    // 典型输出："Mounted /dev/sdb1 at /run/media/user/Label."
+    let marker = " at ";
+    let idx = stdout.find(marker)?;
+    let mut path = stdout[idx + marker.len()..].trim();
+    if let Some(stripped) = path.strip_suffix('.') {
+        path = stripped.trim();
+    }
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
 }
 
 /// 根据平台习惯生成卷显示名。
@@ -235,28 +541,16 @@ fn windows_drive_letter(mount_str: &str) -> Option<String> {
 }
 
 /// 格式化容量信息（可用/总计），并尽量补充文件系统信息（若可得）。
-fn format_capacity(avail: u64, total: u64, disk: &sysinfo::Disk) -> String {
-    let avail_s = format_bytes(avail);
-    let total_s = format_bytes(total);
+fn format_capacity(avail: u64, total: u64, _disk: &sysinfo::Disk) -> String {
+    let avail_s = format_size(avail);
+    let total_s = format_size(total);
 
-    // sysinfo Disk 的 file_system() 返回 OsStr（例如 "NTFS"/"ext4"）
-    let fs = disk.file_system().to_string_lossy().to_string();
-    if fs.trim().is_empty() {
-        t!(
-            "sidebar.capacity.available",
-            avail = avail_s,
-            total = total_s
-        )
-        .to_string()
-    } else {
-        t!(
-            "sidebar.capacity.available_fs",
-            avail = avail_s,
-            total = total_s,
-            fs = fs
-        )
-        .to_string()
-    }
+    t!(
+        "sidebar.capacity.available",
+        avail = avail_s,
+        total = total_s
+    )
+    .to_string()
 }
 
 /// 是否应过滤该挂载点（主要用于 Linux）。
@@ -288,9 +582,26 @@ fn add_if_dir(out: &mut Vec<SidebarItem>, kind: SidebarItemKind, label: String, 
             label,
             subtitle: Some(path.display().to_string()),
             path: path.clone(),
+            device: None,
+            fs_type: None,
+            removable: None,
+            mounted: true,
+            system: false,
             writable: Some(is_writable(&path)),
         });
     }
+}
+
+/// 是否系统盘挂载点（Linux 常见）。
+fn is_system_mount_path(path: &Path) -> bool {
+    matches!(path.to_string_lossy().as_ref(), "/" | "/boot" | "/boot/efi")
+}
+
+/// 是否系统盘设备（用于阻止卸载）。
+pub fn is_system_device(device: &str) -> bool {
+    load_sidebar_items()
+        .iter()
+        .any(|item| item.device.as_deref() == Some(device) && item.system)
 }
 
 /// 粗略判断一个路径是否可写。
@@ -302,22 +613,6 @@ fn is_writable(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|m| !m.permissions().readonly())
         .unwrap_or(false)
-}
-
-/// 人类可读格式的字节数。
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0usize;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} {}", UNITS[unit])
-    } else {
-        format!("{:.1} {}", value, UNITS[unit])
-    }
 }
 
 #[cfg(test)]

@@ -1,16 +1,24 @@
 //! iced 消息定义：UI 与状态的唯一通信通道。
 
+use super::{ContextAction, EntryRow, FileEntry, ThemeMode};
 use crate::i18n;
 use iced::event;
 use std::path::PathBuf;
 
-use super::{ContextAction, EntryRow, FileEntry, ThemeMode};
-
 #[derive(Debug, Clone)]
 pub enum Message {
+    #[allow(dead_code)]
+    Noop,
+
+    // -------------------------------
+    // 导航与菜单
+    // -------------------------------
+    ToggleMenu,
     ToggleTitleMenu,
     DismissTitleMenu,
-    ToggleMenu,
+
+    /// 专用：关闭文件条目右键菜单
+    DismissContextMenu,
     NavigateBack,
     NavigateForward,
     NavigateUp,
@@ -29,7 +37,6 @@ pub enum Message {
     ToggleLocationEdit,
     ThemeModeChanged(ThemeMode),
 
-    Noop,
     /// 设置：用户选择了语言偏好（跟随系统 or 固定 en/zh-CN）。
     LocalePreferenceChanged(i18n::LocalePreference),
     /// 设置：用户请求“回滚到系统语言”（等价于把偏好设为 FollowSystem）。
@@ -73,8 +80,24 @@ pub enum Message {
     DeleteCancel,
     DeleteFinished(Result<(), String>),
 
+    /// 打开文件/路径完成
+    OpenFinished(Result<(), String>),
+
+    /// 属性对话框
+    PropertiesRequested(EntryRow),
+    PropertiesClose,
+
     /// 强类型右键/上下文操作（替代字符串 action）。
     ContextActionFor(ContextAction, EntryRow),
+
+    /// 磁盘挂载/卸载（Linux: udisksctl）
+    MountRequested(String),
+    UnmountRequested(String),
+    UnmountConfirmRequested(String),
+    UnmountConfirmCancel,
+    UnmountConfirmAccept,
+    MountFinished(Result<PathBuf, String>),
+    UnmountFinished(Result<(), String>),
 
     // Drawer（右侧抽屉）
     CloseDrawer,
@@ -101,14 +124,19 @@ pub enum Message {
     ///
     /// 说明：
     /// - `children` 是该目录的直接子项（不递归）；
-    /// - 由 app 发起异步加载，完成后回传到此消息，更新 UI 的虚拟树结构。
+    //  - 由 app 发起异步加载，完成后回传到此消息，更新 UI 的虚拟树结构。
     TreeChildrenLoaded(PathBuf, Vec<FileEntry>),
 
     // 单任务模型：进度与可取消（用于 Drawer::Task 面板）
     TaskCancelRequested,
 
     Tick,
+    /// 文件视图自动刷新
+    AutoRefreshTick,
     Event(event::Event),
     /// 主列表滚动视口变更（用于虚拟列表）。
     ListViewportChanged(iced::widget::scrollable::Viewport),
+
+    /// 侧边栏左划（触屏/鼠标拖拽）
+    SidebarSwipeStart(String, PathBuf),
 }

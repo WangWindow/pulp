@@ -1,15 +1,20 @@
 //! 状态层的纯辅助函数：不持有 App，仅做转换与渲染拼装。
 
-use crate::app::components;
 use crate::app::themes;
+use crate::app::ui_rules::{
+    entry_context_menu_entries, menu_spec::MenuIcon, menu_spec::MenuSpecItem,
+};
+use crate::components;
+use crate::components::menus::{MenuEntry, MenuStyle};
 use crate::domain::{EntryRow, EntrySource, FileEntry, LIST_OVERSCAN, LIST_ROW_HEIGHT_PX, Message};
 use iced::widget::scrollable::Viewport;
 use iced::widget::{button, container, row, text};
 use iced::{Alignment, Element, Length};
-use iced_aw::ContextMenu;
+use icondata::{RiArchive2BusinessLine, RiFile2DocumentLine, RiFolder2DocumentLine};
 use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// 尝试从 `archive.zip::/path/to/file` 中解析出压缩包名与内部路径（以 `/` 开头）。
 ///
@@ -195,15 +200,16 @@ pub(super) fn build_tree_render_rows(
 pub(super) fn tree_view_rows<'a>(
     tree_rows: &'a [EntryRow],
     expanded: &'a HashSet<PathBuf>,
-    selected_entry: Option<&'a PathBuf>,
+    selected_path: &'a std::path::Path,
     viewport: Option<Viewport>,
+    menu_style: MenuStyle,
+    build_context_menu: fn(&EntryRow) -> Arc<Vec<MenuEntry<Message>>>,
 ) -> Element<'a, Message> {
     const INDENT_PX: f32 = 14.0;
     let config =
-        crate::app::components::VirtualListConfig::new(LIST_ROW_HEIGHT_PX, LIST_OVERSCAN, viewport);
+        crate::components::VirtualListConfig::new(LIST_ROW_HEIGHT_PX, LIST_OVERSCAN, viewport);
 
-    crate::app::components::virtual_list(tree_rows, config, move |r| {
-        let path = r.path.clone();
+    crate::components::virtual_list::<_, Message, _>(tree_rows, config, move |r| {
         let is_dir = r.is_dir;
 
         let arrow: Element<'a, Message> = if is_dir {
@@ -227,19 +233,34 @@ pub(super) fn tree_view_rows<'a>(
             .width(Length::Fill)
             .align_y(Alignment::Center);
 
-        let is_selected = selected_entry.map(|p| *p == path).unwrap_or(false);
+        let is_selected = r.path.as_path() == selected_path;
+
         let base = button(content)
             .padding([6, 8])
             .width(Length::Fill)
-            .style(move |theme, status| themes::styles::list_row_style(theme, status, is_selected))
+            .height(Length::Fixed(LIST_ROW_HEIGHT_PX))
+            .style(move |theme, status| {
+                if is_selected {
+                    themes::styles::list_row_selected_style(theme, status)
+                } else {
+                    themes::styles::list_row_style(theme, status)
+                }
+            })
             .on_press(Message::RowClicked(r.clone()));
 
-        let menu = move || components::context_menu_for_entry(r.clone());
+        // 树视图右键菜单：由上层注入菜单构建逻辑，避免 helpers 直接依赖 i18n。
+        let items = build_context_menu(&r);
 
         let indent_px = r.depth as f32 * INDENT_PX;
         let indented_row = row![
             container(text("")).width(Length::Fixed(indent_px)),
-            container(ContextMenu::new(base, menu)).width(Length::Fill),
+            container(components::context_dropdown(
+                base.into(),
+                items,
+                Message::DismissContextMenu,
+                menu_style,
+            ))
+            .width(Length::Fill),
         ]
         .spacing(0)
         .width(Length::Fill)
@@ -248,4 +269,34 @@ pub(super) fn tree_view_rows<'a>(
 
         indented_row.into()
     })
+}
+
+/// 将 domain 的菜单规格映射为具体的菜单条目（含 i18n 文案）。
+pub(super) fn build_entry_context_menu(row: &EntryRow) -> Arc<Vec<MenuEntry<Message>>> {
+    let items: Vec<MenuEntry<Message>> = entry_context_menu_entries(row)
+        .into_iter()
+        .map(|spec| match spec {
+            MenuSpecItem::Item {
+                label_key,
+                icon,
+                action,
+            } => MenuEntry::item(
+                t!(label_key).to_string(),
+                map_menu_icon(icon),
+                Message::ContextActionFor(action, row.clone()),
+            ),
+            MenuSpecItem::Separator => MenuEntry::separator(),
+        })
+        .collect();
+
+    Arc::new(items)
+}
+
+fn map_menu_icon(icon: MenuIcon) -> icondata::Icon {
+    // 中文注释：未知/不常用 icon 先回退为文件图标。
+    match icon {
+        MenuIcon::File => RiFile2DocumentLine,
+        MenuIcon::Folder => RiFolder2DocumentLine,
+        MenuIcon::Archive => RiArchive2BusinessLine,
+    }
 }

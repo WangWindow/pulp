@@ -1,38 +1,47 @@
 //! 文件区：平铺列表（默认视图）
 
-use super::context_menu_for_entry;
-use crate::app::components::{VirtualListConfig, virtual_list};
-use crate::app::themes;
-use crate::domain::{EntryRow, EntrySource, LIST_OVERSCAN, LIST_ROW_HEIGHT_PX, Message};
+use crate::components::common::icon::{IconStyle, icon as render_icon};
+use crate::components::menus::{MenuEntry, MenuStyle, context_dropdown};
+use crate::components::{VirtualListConfig, virtual_list};
+use crate::domain::{EntryRow, EntrySource, LIST_OVERSCAN, LIST_ROW_HEIGHT_PX};
 use crate::utils;
 use iced::widget::scrollable::Viewport;
 use iced::widget::{container, row, text};
-use iced::{Element, Length};
-use iced_aw::ContextMenu;
+use iced::{Element, Length, Theme};
 use icondata::{RiArchive2BusinessLine, RiFile2DocumentLine, RiFolder2DocumentLine};
 use pulp_core::ArchiveFormat;
+use std::sync::Arc;
 
-pub fn file_entries<'a>(
+#[derive(Copy, Clone)]
+pub struct FileListStyle {
+    pub icon_color: iced::Color,
+    pub list_row_style: fn(&Theme, iced::widget::button::Status) -> iced::widget::button::Style,
+}
+
+pub struct FileListActions<M> {
+    pub on_row_clicked: fn(EntryRow) -> M,
+    pub on_dismiss_menu: M,
+}
+
+pub fn file_entries<'a, M: Clone + 'a>(
     entries: &'a [EntryRow],
-    selected_entry: Option<&'a std::path::PathBuf>,
+    selected_path: &'a std::path::Path,
     viewport: Option<Viewport>,
-) -> Element<'a, Message> {
+    menu_style: MenuStyle,
+    style: FileListStyle,
+    actions: FileListActions<M>,
+    build_context_menu: fn(&EntryRow) -> Arc<Vec<MenuEntry<M>>>,
+) -> Element<'a, M> {
     let config = VirtualListConfig::new(LIST_ROW_HEIGHT_PX, LIST_OVERSCAN, viewport);
 
-    virtual_list(entries, config, move |entry| {
+    virtual_list::<_, M, _>(entries, config, move |entry| {
         // 显式类型注解：避免在后续重构中触发 `clone()` 的类型推断失败（E0282）。
         // 这里的目标很明确：我们需要一个“拥有所有权的行模型”，用于消息与闭包捕获。
         let row_model: EntryRow = entry.clone();
-        let path = row_model.path.clone();
 
         // 行内容（图标 + 名称）
         let icon = entry_icon(&row_model);
-        let icon_view = iced::widget::svg(utils::icon_handle(icon))
-            .width(Length::Fixed(16.0))
-            .height(Length::Fixed(16.0))
-            .style(|theme, _status| iced::widget::svg::Style {
-                color: Some(themes::icon_color(theme)),
-            });
+        let icon_view = render_icon::<M>(icon, IconStyle::new(style.icon_color, Some(16.0)));
 
         let name = text(row_model.display_name.clone()).size(13);
         let size_text = row_model
@@ -52,21 +61,34 @@ pub fn file_entries<'a>(
         .width(Length::Fill)
         .align_y(iced::Alignment::Center);
 
+        let is_selected = row_model.path.as_path() == selected_path;
+
         // 行点击：单击选中（由 app/state 处理双击阈值等）
-        let is_selected = selected_entry.map(|p| *p == path).unwrap_or(false);
-        let base = iced::widget::button(content)
+        let base: Element<'a, M> = iced::widget::button(content)
             .padding([6, 8])
             .width(Length::Fill)
-            .style(move |theme, status| themes::styles::list_row_style(theme, status, is_selected))
-            .on_press(Message::RowClicked(row_model.clone()));
-
-        // 右键菜单（ContextMenu）：传入行模型，便于区分文件系统/压缩包条目。
-        let menu = move || context_menu_for_entry(row_model.clone());
-
-        container(ContextMenu::new(base, menu))
-            .width(Length::Fill)
             .height(Length::Fixed(LIST_ROW_HEIGHT_PX))
-            .into()
+            .style(move |theme, status| {
+                if is_selected {
+                    crate::app::themes::styles::list_row_selected_style(theme, status)
+                } else {
+                    (style.list_row_style)(theme, status)
+                }
+            })
+            .on_press((actions.on_row_clicked)(row_model.clone()))
+            .into();
+
+        // 右键菜单：统一封装（ContextMenu + dropdown overlay），菜单内容由单一来源生成。
+        let items = build_context_menu(&row_model);
+        container(context_dropdown(
+            base,
+            items,
+            actions.on_dismiss_menu.clone(),
+            menu_style,
+        ))
+        .width(Length::Fill)
+        .height(Length::Fixed(LIST_ROW_HEIGHT_PX))
+        .into()
     })
 }
 
