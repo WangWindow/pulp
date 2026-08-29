@@ -1,0 +1,19 @@
+[package]
+name = "pulp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+description = "Format7zF-backed archive operations with safe Rust I/O adapters"
+build = "build.rs"
+
+[dependencies]
+filetime = { workspace = true }
+infer = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+cc = { workspace = true }
+
+[lints]
+workspace = true

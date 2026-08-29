@@ -1,0 +1,3 @@
+[submodule "crates/pulp/native/sdk"]
+	path = crates/pulp/native/sdk
+	url = https://github.com/WangWindow/7zip
