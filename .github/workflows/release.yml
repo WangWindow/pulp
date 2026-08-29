@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+
+run-name: Release ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      # Add one entry per future platform/target. Each entry produces one ZIP
+      # containing both the CLI and the GPUI desktop application.
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: pulp-linux-x86_64.zip
+
+    steps:
+      - name: Check out source and 7-Zip SDK
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libvulkan-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xkb-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            pkg-config \
+            zip
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.toml', 'crates/pulp/Cargo.toml', 'apps/pulp-cli/Cargo.toml', 'apps/pulp-ui/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build CLI and UI
+        run: cargo build --release --target "${{ matrix.target }}" -p pulp-cli -p pulp-ui
+
+      - name: Package CLI and UI
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+
+          package_dir="pulp-${TARGET}"
+          mkdir -p "dist/${package_dir}"
+          cp "target/${TARGET}/release/pulp-cli" "dist/${package_dir}/"
+          cp "target/${TARGET}/release/pulp-ui" "dist/${package_dir}/"
+          cp LICENSE "dist/${package_dir}/"
+          cp THIRD_PARTY_NOTICES.md "dist/${package_dir}/"
+
+          license_dir="dist/${package_dir}/licenses/7zip"
+          mkdir -p "${license_dir}"
+          cp crates/pulp/native/sdk/DOC/License.txt "${license_dir}/"
+          cp crates/pulp/native/sdk/DOC/copying.txt "${license_dir}/"
+          cp crates/pulp/native/sdk/DOC/unRarLicense.txt "${license_dir}/"
+
+          (
+            cd dist
+            zip -9 -r "${ARCHIVE}" "${package_dir}"
+          )
+
+      - name: Upload platform package
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulp-${{ matrix.name }}
+          path: dist/${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pulp-*
+          path: dist
+          merge-multiple: true
+
+      - name: Resolve release tag
+        id: release
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${DISPATCH_TAG}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${tag}" =~ ^v[0-9] ]]; then
+            echo "Release tag must start with v followed by a version number: ${tag}" >&2
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify release packages
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/*.zip)
+
+          if (( ${#archives[@]} == 0 )); then
+            echo "No ZIP packages were downloaded" >&2
+            exit 1
+          fi
+
+          printf 'Release package: %s\n' "${archives[@]}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release create "${TAG}" dist/*.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Pulp ${TAG}" \
+            --generate-notes
