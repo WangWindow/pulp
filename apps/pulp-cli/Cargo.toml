@@ -1,0 +1,16 @@
+[package]
+name = "pulp-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+description = "Pulp command-line archive application"
+
+[dependencies]
+clap = { workspace = true }
+pulp = { workspace = true }
+rpassword = { workspace = true }
+
+[lints]
+workspace = true
