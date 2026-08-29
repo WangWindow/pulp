@@ -1,0 +1,81 @@
+file: File
+edit: Edit
+view: View
+help: Help
+about_pulp: About Pulp
+open_archive: Open Archive
+new_archive: New Archive
+extract_to: Extract To
+test: Test
+close_archive: Close Archive
+cancel_operation: Cancel Operation
+select_all: Select All
+open_settings: Settings
+back: Back
+restore_defaults: Restore Defaults
+quick_extract: Quick Extract
+stop_operation: Stop Operation
+search_settings: Search settings...
+open_or_create_archive: Open or create an archive
+drop_archive_here: Drop an archive here to open it
+ready: Ready
+no_archive_open: No archive open
+opening_archive: Opening archive…
+archive_opened: Archive opened
+extraction_completed: Extraction completed
+creation_completed: Archive created
+test_completed: Archive verified
+operation_cancelled: Operation cancelled
+processing: Processing
+extracting: Extracting
+creating: Creating
+testing: Testing
+name: Name
+size: Size
+packed_size: Packed Size
+type: Type
+directory: Directory
+file_entry: File
+symbolic_link: Symbolic link
+hard_link: Hard link
+special_file: Special
+objects: objects
+empty_archive: This archive is empty
+general: General
+compression: Compression
+extraction: Extraction
+security: Security
+other: Other
+theme: Theme
+language: Language
+system: System
+light: Light
+dark: Dark
+english: English
+simplified_chinese: Simplified Chinese
+default_list_mode: Default list mode
+compact_layout: Compact layout
+details: Details
+list: List
+show_folder_pane: Show folder pane
+show_archive_path: Show archive path
+smart_extraction: Smart extraction
+restore_metadata: Restore safe metadata
+overwrite_policy: Overwrite policy
+ask_before_replacing: Ask before replacing
+replace_existing: Replace existing files
+skip_existing: Skip existing files
+reject_links: Reject links
+default_format: Default format
+compression_level: Compression level
+compression_method: Compression method
+provider_default: Provider default
+test_after_create: Test after creation
+settings_saved: Settings saved
+select_destination: Select destination
+source_paths: Source paths
+password_required: Password required
+password_prompt: Enter the archive password
+wrong_password: Incorrect password. Try again.
+warning: Warning
+error: Error
